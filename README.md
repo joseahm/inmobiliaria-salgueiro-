@@ -64,6 +64,19 @@ cd backend && .venv/bin/pytest -q
 cd frontend && npm run build
 ```
 
+## Docker / VPS
+
+Para levantar todo con Docker Compose:
+
+```bash
+cp .env.production.example .env.production
+docker compose up -d --build
+```
+
+La app queda disponible en `http://localhost` y el frontend reenvia `/api` al backend.
+
+Guia completa para Hetzner CX22: [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## Datos Iniciales
 
 Para reiniciar la base local con datos de prueba operativos:

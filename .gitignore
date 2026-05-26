@@ -2,6 +2,7 @@
 
 # Entorno local y secretos
 .env
+.env.production
 *.env.local
 backend/.venv/
 backend/.env
