@@ -31,6 +31,7 @@ export interface Person {
   email: string;
   address?: string;
   person_type: "tenant" | "owner" | "both";
+  created_at: string;
   total_debt: number;
   overdue_debt: number;
   open_charges: number;
@@ -58,6 +59,7 @@ export interface PropertyItem {
   taxes_account: string;
   sanitation_account: string;
   notes: string;
+  created_at: string;
   owners: PropertyOwner[];
   services?: PropertyServiceAccount[];
 }
@@ -88,11 +90,34 @@ export interface ContractItem {
   rent_amount: number;
   payment_type: string;
   rent_payment_timing: string;
+  guarantee_type: string;
+  guarantee_provider: string;
+  guarantee_percent: number;
+  rent_regime: string;
+  reajustment_index: string;
+  next_reajustment_date: string;
   commission_percent: number;
   irpf_applies: boolean;
   irpf_percent: number;
   payment_origin: string;
   active: boolean;
+}
+
+export interface PropertyVisit {
+  id: number;
+  property_id: number;
+  property_reference: string;
+  property_address: string;
+  interested_name: string;
+  interested_phone: string;
+  interested_email: string;
+  visit_at: string;
+  status: string;
+  contact_message: string;
+  notification_phone: string;
+  reminder_minutes_before: number;
+  notes: string;
+  created_at: string;
 }
 
 export interface Charge {

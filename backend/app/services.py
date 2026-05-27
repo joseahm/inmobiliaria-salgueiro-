@@ -31,6 +31,7 @@ from .models import (
     Property,
     PropertyOwnerShare,
     PropertyServiceAccount,
+    PropertyVisit,
     TenantCredit,
 )
 
@@ -800,11 +801,37 @@ def contract_to_dict(session: Session, contract: Contract) -> Dict[str, object]:
         "rent_amount": money(contract.rent_amount),
         "payment_type": contract.payment_type,
         "rent_payment_timing": contract.rent_payment_timing,
+        "guarantee_type": contract.guarantee_type,
+        "guarantee_provider": contract.guarantee_provider,
+        "guarantee_percent": contract.guarantee_percent,
+        "rent_regime": contract.rent_regime,
+        "reajustment_index": contract.reajustment_index,
+        "next_reajustment_date": contract.next_reajustment_date.isoformat() if contract.next_reajustment_date else "",
         "commission_percent": contract.commission_percent,
         "irpf_applies": contract.irpf_applies,
         "irpf_percent": contract.irpf_percent,
         "payment_origin": contract.payment_origin,
         "active": contract.active,
+    }
+
+
+def property_visit_to_dict(session: Session, visit: PropertyVisit) -> Dict[str, object]:
+    property_obj = session.get(Property, visit.property_id)
+    return {
+        "id": visit.id,
+        "property_id": visit.property_id,
+        "property_reference": property_obj.reference if property_obj else "",
+        "property_address": property_obj.address if property_obj else "",
+        "interested_name": visit.interested_name,
+        "interested_phone": visit.interested_phone,
+        "interested_email": visit.interested_email,
+        "visit_at": visit.visit_at.isoformat(),
+        "status": visit.status,
+        "contact_message": visit.contact_message,
+        "notification_phone": visit.notification_phone,
+        "reminder_minutes_before": visit.reminder_minutes_before,
+        "notes": visit.notes,
+        "created_at": visit.created_at.isoformat(),
     }
 
 
@@ -829,6 +856,7 @@ def person_debt_summary(session: Session, person: Person) -> Dict[str, object]:
         "email": person.email,
         "address": person.address,
         "person_type": person.person_type,
+        "created_at": person.created_at.isoformat(),
         "total_debt": money(total_debt),
         "overdue_debt": money(overdue),
         "open_charges": len(

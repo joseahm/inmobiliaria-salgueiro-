@@ -37,6 +37,7 @@ from .models import (
     Property,
     PropertyOwnerShare,
     PropertyServiceAccount,
+    PropertyVisit,
     PublicPaymentLink,
     Reminder,
     TenantCredit,
@@ -62,6 +63,7 @@ from .schemas import (
     PropertyAccountUpdate,
     PropertyCreate,
     PropertyServiceAccountCreate,
+    PropertyVisitCreate,
     PublicLinkCreate,
     ReminderPreviewRequest,
     SettlementGenerateRequest,
@@ -97,6 +99,7 @@ from .services import (
     paid_amount_for_charge,
     person_debt_summary,
     property_service_to_dict,
+    property_visit_to_dict,
     public_link_charge_ids,
     refresh_all_charge_statuses,
     refresh_charge_status,
@@ -159,6 +162,24 @@ def health() -> Dict[str, str]:
 def safe_filename(filename: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]", "_", filename or "archivo")
     return cleaned[:120] or "archivo"
+
+
+def parse_visit_datetime(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Fecha y hora de visita inválida") from exc
+
+
+def apply_guarantee_defaults(data: Dict[str, Any]) -> Dict[str, Any]:
+    guarantee_type = str(data.get("guarantee_type") or "").lower()
+    if guarantee_type == "anda":
+        data["guarantee_percent"] = 2.0
+        data["payment_origin"] = "ANDA"
+    elif guarantee_type in {"contaduria", "contaduría"}:
+        data["guarantee_percent"] = 3.0
+        data["payment_origin"] = "Contaduria"
+    return data
 
 
 def find_duplicate_invoice(
@@ -747,6 +768,72 @@ def delete_property(property_id: int, session: Session = Depends(get_session)) -
     return {"status": "deleted"}
 
 
+@app.get("/property-visits")
+def list_property_visits(
+    status: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+) -> List[Dict[str, object]]:
+    query = select(PropertyVisit)
+    if status:
+        query = query.where(PropertyVisit.status == status)
+    visits = session.exec(query).all()
+    return [
+        property_visit_to_dict(session, visit)
+        for visit in sorted(visits, key=lambda item: item.visit_at)
+    ]
+
+
+@app.post("/property-visits")
+def create_property_visit(
+    payload: PropertyVisitCreate, session: Session = Depends(get_session)
+) -> Dict[str, object]:
+    property_obj = session.get(Property, payload.property_id)
+    if not property_obj:
+        raise not_found("Propiedad no encontrada")
+    data = payload.model_dump()
+    data["visit_at"] = parse_visit_datetime(data["visit_at"])
+    if not data.get("contact_message"):
+        data["contact_message"] = (
+            f"Hola {data['interested_name']}, te escribo para confirmar la visita a "
+            f"{property_obj.reference} el {data['visit_at'].strftime('%d/%m/%Y a las %H:%M')}."
+        )
+    visit = PropertyVisit(**data)
+    session.add(visit)
+    session.commit()
+    session.refresh(visit)
+    return property_visit_to_dict(session, visit)
+
+
+@app.patch("/property-visits/{visit_id}")
+def update_property_visit(
+    visit_id: int, payload: PropertyVisitCreate, session: Session = Depends(get_session)
+) -> Dict[str, object]:
+    visit = session.get(PropertyVisit, visit_id)
+    if not visit:
+        raise not_found("Visita no encontrada")
+    property_obj = session.get(Property, payload.property_id)
+    if not property_obj:
+        raise not_found("Propiedad no encontrada")
+    data = payload.model_dump()
+    data["visit_at"] = parse_visit_datetime(data["visit_at"])
+    for key, value in data.items():
+        setattr(visit, key, value)
+    session.add(visit)
+    session.commit()
+    session.refresh(visit)
+    return property_visit_to_dict(session, visit)
+
+
+@app.delete("/property-visits/{visit_id}")
+def delete_property_visit(visit_id: int, session: Session = Depends(get_session)) -> Dict[str, str]:
+    visit = session.get(PropertyVisit, visit_id)
+    if not visit:
+        raise not_found("Visita no encontrada")
+    session.delete(visit)
+    session.commit()
+    return {"status": "deleted"}
+
+
 @app.get("/contracts")
 def list_contracts(session: Session = Depends(get_session)) -> List[Dict[str, object]]:
     contracts = session.exec(select(Contract)).all()
@@ -768,7 +855,7 @@ def create_contract(
             existing.active = False
             existing.end_date = payload.start_date - timedelta(days=1)
             session.add(existing)
-    contract = Contract(**payload.model_dump())
+    contract = Contract(**apply_guarantee_defaults(payload.model_dump()))
     session.add(contract)
     session.commit()
     session.refresh(contract)
@@ -794,7 +881,7 @@ def update_contract(
             existing.active = False
             existing.end_date = payload.start_date - timedelta(days=1)
             session.add(existing)
-    for key, value in payload.model_dump().items():
+    for key, value in apply_guarantee_defaults(payload.model_dump()).items():
         setattr(contract, key, value)
     session.add(contract)
     session.commit()

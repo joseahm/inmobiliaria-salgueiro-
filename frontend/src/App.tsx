@@ -54,12 +54,13 @@ import type {
   PersonDetail,
   PropertyDetail,
   PropertyItem,
+  PropertyVisit,
   PublicPortalData,
   Settlement,
   TenantCredit
 } from "./types";
 
-type View = "dashboard" | "charges" | "invoices" | "tenants" | "owners" | "properties" | "contracts" | "payments" | "cash" | "settlements";
+type View = "dashboard" | "charges" | "invoices" | "tenants" | "owners" | "properties" | "visits" | "contracts" | "payments" | "cash" | "settlements";
 type AppModal =
   | "charge"
   | "payment"
@@ -83,6 +84,7 @@ const navItems: Array<{ id: View; label: string; icon: typeof Home }> = [
   { id: "tenants", label: "Inquilinos", icon: UserRound },
   { id: "owners", label: "Propietarios", icon: Users },
   { id: "properties", label: "Propiedades", icon: Building2 },
+  { id: "visits", label: "Visitas", icon: CalendarDays },
   { id: "contracts", label: "Contratos", icon: ReceiptText },
   { id: "payments", label: "Pagos", icon: Banknote },
   { id: "cash", label: "Caja", icon: WalletCards },
@@ -129,6 +131,35 @@ function currentPeriod() {
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return "sin fecha";
+  return new Intl.DateTimeFormat("es-UY", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function buildWhatsappUrl(phone: string, message: string) {
+  const cleaned = phone.replace(/\D/g, "");
+  return cleaned ? `https://wa.me/${cleaned}?text=${encodeURIComponent(message)}` : "";
+}
+
+function isVisitAlertActive(visit: PropertyVisit, now: Date) {
+  if (visit.status === "realizada" || visit.status === "cancelada") return false;
+  const visitDate = new Date(visit.visit_at);
+  const alertFrom = new Date(visitDate.getTime() - visit.reminder_minutes_before * 60 * 1000);
+  const keepUntil = new Date(visitDate.getTime() + 24 * 60 * 60 * 1000);
+  return now >= alertFrom && now <= keepUntil;
+}
+
+function legacyCodeValue(value: string) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : value.toLowerCase();
 }
 
 function PublicPortal() {
@@ -255,6 +286,7 @@ function App() {
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [properties, setProperties] = useState<PropertyItem[]>([]);
+  const [propertyVisits, setPropertyVisits] = useState<PropertyVisit[]>([]);
   const [contracts, setContracts] = useState<ContractItem[]>([]);
   const [charges, setCharges] = useState<Charge[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
@@ -274,16 +306,18 @@ function App() {
   const [modal, setModal] = useState<AppModal>(null);
   const [personModalDefaultType, setPersonModalDefaultType] = useState<Person["person_type"]>("tenant");
   const [publicLink, setPublicLink] = useState("");
+  const [now, setNow] = useState(() => new Date());
 
   async function loadAll() {
     setLoading(true);
     setError("");
     try {
-      const [summary, persons, props, contractsData, chargesData, settlementsData, cashData, ownerChargeData, creditsData, invoiceData, inboxData, emailSetupData] =
+      const [summary, persons, props, visitsData, contractsData, chargesData, settlementsData, cashData, ownerChargeData, creditsData, invoiceData, inboxData, emailSetupData] =
         await Promise.all([
           api.dashboard(),
           api.people(),
           api.properties(),
+          api.propertyVisits(),
           api.contracts(),
           api.charges(),
           api.settlements(),
@@ -297,6 +331,7 @@ function App() {
       setDashboard(summary);
       setPeople(persons);
       setProperties(props);
+      setPropertyVisits(visitsData);
       setContracts(contractsData);
       setCharges(chargesData);
       setSettlements(settlementsData);
@@ -318,6 +353,11 @@ function App() {
       loadAll();
     }
   }, [token]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const filteredCharges = useMemo(() => {
     return charges.filter((charge) => {
@@ -365,6 +405,10 @@ function App() {
     setSelectedCharges(openItems);
     setModal("link");
   }
+
+  const visitAlerts = useMemo(() => {
+    return propertyVisits.filter((visit) => isVisitAlertActive(visit, now));
+  }, [propertyVisits, now]);
 
   async function removeEntity(label: string, action: () => Promise<unknown>) {
     if (!window.confirm(`Eliminar ${label}?`)) return;
@@ -454,6 +498,12 @@ function App() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {visitAlerts.length > 0 && (
+                <button className="btn-secondary border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100" onClick={() => setActiveView("visits")}>
+                  <Bell className="h-4 w-4" />
+                  {visitAlerts.length === 1 ? "1 visita" : `${visitAlerts.length} visitas`}
+                </button>
+              )}
               <button className="btn-secondary" onClick={loadAll} disabled={loading}>
                 <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
                 Actualizar
@@ -474,6 +524,30 @@ function App() {
             <div className="mb-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
               <AlertCircle className="h-4 w-4" />
               {error}
+            </div>
+          )}
+          {visitAlerts.length > 0 && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Bell className="h-4 w-4" />
+                  <span className="font-semibold">
+                    {visitAlerts.length === 1 ? "Tenés 1 visita para confirmar" : `Tenés ${visitAlerts.length} visitas para confirmar`}
+                  </span>
+                  <span>{formatDateTime(visitAlerts[0].visit_at)} · {visitAlerts[0].property_reference}</span>
+                </div>
+                <div className="flex gap-2">
+                  {visitAlerts[0].notification_phone && (
+                    <a className="btn-secondary" href={buildWhatsappUrl(visitAlerts[0].notification_phone, `Recordatorio de visita: ${visitAlerts[0].interested_name} en ${visitAlerts[0].property_reference} el ${formatDateTime(visitAlerts[0].visit_at)}. Tel: ${visitAlerts[0].interested_phone || "sin dato"}`)} target="_blank" rel="noreferrer">
+                      <MessageCircle className="h-4 w-4" />
+                      Avisar por WhatsApp
+                    </a>
+                  )}
+                  <button className="btn-secondary" onClick={() => setActiveView("visits")}>
+                    Ver agenda
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -604,6 +678,13 @@ function App() {
                 setModal("propertyDetail");
               }}
               onDelete={(property) => removeEntity(property.reference, () => api.deleteProperty(property.id))}
+            />
+          )}
+          {activeView === "visits" && (
+            <VisitsView
+              visits={propertyVisits}
+              properties={properties}
+              onRefresh={loadAll}
             />
           )}
           {activeView === "contracts" && (
@@ -1619,30 +1700,50 @@ function TenantsView({
 }) {
   const [query, setQuery] = useState("");
   const [debtFilter, setDebtFilter] = useState("todos");
+  const [sortBy, setSortBy] = useState("codigo_desc");
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
-  const visible = people.filter((person) => {
-    const openItems = getOpenCharges(person.id);
-    const matchesText = !query || includesText(`${person.full_name} ${person.document} ${person.mobile} ${person.email} ${person.legacy_code}`, query);
-    const matchesDebt =
-      debtFilter === "todos" ||
-      (debtFilter === "con_deuda" && person.total_debt > 0) ||
-      (debtFilter === "vencida" && person.overdue_debt > 0) ||
-      (debtFilter === "sin_deuda" && openItems.length === 0);
-    return matchesText && matchesDebt;
-  });
+  const visible = [...people]
+    .filter((person) => {
+      const openItems = getOpenCharges(person.id);
+      const matchesText = !query || includesText(`${person.full_name} ${person.document} ${person.mobile} ${person.email} ${person.legacy_code}`, query);
+      const matchesDebt =
+        debtFilter === "todos" ||
+        (debtFilter === "con_deuda" && person.total_debt > 0) ||
+        (debtFilter === "vencida" && person.overdue_debt > 0) ||
+        (debtFilter === "sin_deuda" && openItems.length === 0);
+      return matchesText && matchesDebt;
+    })
+    .sort((a, b) => {
+      const codeA = legacyCodeValue(a.legacy_code || "0");
+      const codeB = legacyCodeValue(b.legacy_code || "0");
+      if (sortBy === "codigo_asc") return codeA > codeB ? 1 : codeA < codeB ? -1 : 0;
+      if (sortBy === "codigo_desc") return codeA < codeB ? 1 : codeA > codeB ? -1 : 0;
+      if (sortBy === "fecha_desc") return b.created_at.localeCompare(a.created_at);
+      if (sortBy === "fecha_asc") return a.created_at.localeCompare(b.created_at);
+      if (sortBy === "deuda_desc") return b.total_debt - a.total_debt;
+      return a.full_name.localeCompare(b.full_name);
+    });
   const paged = usePaged(visible);
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-panel md:grid-cols-[1fr_220px_auto]">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-panel md:grid-cols-[1fr_220px_240px_auto]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <input className="input pl-9" placeholder="Buscar nombre, documento o contacto" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <input className="input pl-9" placeholder="Buscar nombre, código, documento o contacto" value={query} onChange={(event) => setQuery(event.target.value)} />
         </div>
         <select className="input" value={debtFilter} onChange={(event) => setDebtFilter(event.target.value)}>
           <option value="todos">Todos</option>
           <option value="con_deuda">Con deuda</option>
           <option value="vencida">Con vencida</option>
           <option value="sin_deuda">Sin deuda</option>
+        </select>
+        <select className="input" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+          <option value="codigo_desc">Código mayor primero</option>
+          <option value="codigo_asc">Código menor primero</option>
+          <option value="fecha_desc">Creación más reciente</option>
+          <option value="fecha_asc">Creación más antigua</option>
+          <option value="nombre_asc">Nombre A-Z</option>
+          <option value="deuda_desc">Mayor deuda</option>
         </select>
         <button className="btn-primary" onClick={onNew}>
           <Plus className="h-4 w-4" />
@@ -1659,6 +1760,7 @@ function TenantsView({
                 <div>
                   <h3 className="font-semibold text-ink">{person.full_name}</h3>
                   <p className="mt-1 text-sm text-muted">{[person.legacy_code && `Código ${person.legacy_code}`, person.document || person.email || person.mobile].filter(Boolean).join(" · ")}</p>
+                  <p className="mt-1 text-xs text-muted">Creado {formatDateTime(person.created_at)}</p>
                 </div>
                 <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{openItems.length} abiertas</span>
               </div>
@@ -1678,6 +1780,7 @@ function TenantsView({
                   <p>Documento: {person.document || "sin dato"}</p>
                   <p>Email: {person.email || "sin dato"}</p>
                   <p>Teléfono: {person.mobile || person.phone || "sin dato"}</p>
+                  <p>Fecha de creación: {formatDateTime(person.created_at)}</p>
                   <p>Deudas abiertas: {openItems.map((charge) => `${charge.concept} ${formatCurrency(charge.remaining_amount)}`).join(", ") || "ninguna"}</p>
                 </div>
               )}
@@ -1729,9 +1832,20 @@ function OwnersView({
   onDelete: (person: Person) => void;
 }) {
   const [query, setQuery] = useState("");
-  const visible = people.filter((person) =>
-    !query || includesText(`${person.full_name} ${person.document} ${person.mobile} ${person.email} ${person.legacy_code}`, query)
-  );
+  const [sortBy, setSortBy] = useState("codigo_desc");
+  const visible = [...people]
+    .filter((person) =>
+      !query || includesText(`${person.full_name} ${person.document} ${person.mobile} ${person.email} ${person.legacy_code}`, query)
+    )
+    .sort((a, b) => {
+      const codeA = legacyCodeValue(a.legacy_code || "0");
+      const codeB = legacyCodeValue(b.legacy_code || "0");
+      if (sortBy === "codigo_asc") return codeA > codeB ? 1 : codeA < codeB ? -1 : 0;
+      if (sortBy === "codigo_desc") return codeA < codeB ? 1 : codeA > codeB ? -1 : 0;
+      if (sortBy === "fecha_desc") return b.created_at.localeCompare(a.created_at);
+      if (sortBy === "fecha_asc") return a.created_at.localeCompare(b.created_at);
+      return a.full_name.localeCompare(b.full_name);
+    });
   const paged = usePaged(visible);
   const ownedProperties = (ownerId: number) =>
     properties.filter((property) => property.owners.some((owner) => owner.id === ownerId));
@@ -1740,11 +1854,18 @@ function OwnersView({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-panel md:grid-cols-[1fr_auto]">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-panel md:grid-cols-[1fr_240px_auto]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <input className="input pl-9" placeholder="Buscar propietario, documento o contacto" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <input className="input pl-9" placeholder="Buscar propietario, código, documento o contacto" value={query} onChange={(event) => setQuery(event.target.value)} />
         </div>
+        <select className="input" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+          <option value="codigo_desc">Código mayor primero</option>
+          <option value="codigo_asc">Código menor primero</option>
+          <option value="fecha_desc">Creación más reciente</option>
+          <option value="fecha_asc">Creación más antigua</option>
+          <option value="nombre_asc">Nombre A-Z</option>
+        </select>
         <button className="btn-primary" onClick={onNew}>
           <Plus className="h-4 w-4" />
           Nuevo propietario
@@ -1761,6 +1882,7 @@ function OwnersView({
                   <div>
                     <h3 className="font-semibold text-ink">{person.full_name}</h3>
                     <p className="mt-1 text-sm text-muted">{[person.legacy_code && `Código ${person.legacy_code}`, person.document || person.email || person.mobile].filter(Boolean).join(" · ")}</p>
+                    <p className="mt-1 text-xs text-muted">Creado {formatDateTime(person.created_at)}</p>
                   </div>
                   <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{props.length} finca(s)</span>
                 </div>
@@ -1813,18 +1935,29 @@ function PropertiesView({
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("todos");
-  const visible = properties.filter((property) => {
-    const ownerText = property.owners.map((owner) => owner.full_name).join(" ");
-    const serviceText = property.services?.map((service) => `${service.provider} ${service.account_number}`).join(" ") ?? "";
-    return (status === "todos" || property.occupancy_status === status) && (!query || includesText(`${property.reference} ${property.address} ${property.padron} ${property.ute_account} ${property.ose_account} ${ownerText} ${serviceText}`, query));
-  });
+  const [sortBy, setSortBy] = useState("codigo_desc");
+  const visible = [...properties]
+    .filter((property) => {
+      const ownerText = property.owners.map((owner) => owner.full_name).join(" ");
+      const serviceText = property.services?.map((service) => `${service.provider} ${service.account_number}`).join(" ") ?? "";
+      return (status === "todos" || property.occupancy_status === status) && (!query || includesText(`${property.legacy_code} ${property.reference} ${property.address} ${property.padron} ${property.ute_account} ${property.ose_account} ${ownerText} ${serviceText}`, query));
+    })
+    .sort((a, b) => {
+      const codeA = legacyCodeValue(a.legacy_code || "0");
+      const codeB = legacyCodeValue(b.legacy_code || "0");
+      if (sortBy === "codigo_asc") return codeA > codeB ? 1 : codeA < codeB ? -1 : 0;
+      if (sortBy === "codigo_desc") return codeA < codeB ? 1 : codeA > codeB ? -1 : 0;
+      if (sortBy === "fecha_desc") return b.created_at.localeCompare(a.created_at);
+      if (sortBy === "fecha_asc") return a.created_at.localeCompare(b.created_at);
+      return a.reference.localeCompare(b.reference);
+    });
   const paged = usePaged(visible);
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-panel md:grid-cols-[1fr_220px_auto]">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-panel md:grid-cols-[1fr_220px_240px_auto]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <input className="input pl-9" placeholder="Buscar ref, dirección, padrón, propietario o cuenta" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <input className="input pl-9" placeholder="Buscar código, ref, dirección, padrón, propietario o cuenta" value={query} onChange={(event) => setQuery(event.target.value)} />
         </div>
         <select className="input" value={status} onChange={(event) => setStatus(event.target.value)}>
           <option value="todos">Todos los estados</option>
@@ -1832,13 +1965,20 @@ function PropertiesView({
           <option value="libre">Libre</option>
           <option value="mantenimiento">Mantenimiento</option>
         </select>
+        <select className="input" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+          <option value="codigo_desc">Código mayor primero</option>
+          <option value="codigo_asc">Código menor primero</option>
+          <option value="fecha_desc">Creación más reciente</option>
+          <option value="fecha_asc">Creación más antigua</option>
+          <option value="referencia_asc">Referencia A-Z</option>
+        </select>
         <button className="btn-primary" onClick={onNew}>
           <Plus className="h-4 w-4" />
           Nueva propiedad
         </button>
       </div>
       <div className="rounded-lg border border-slate-200 bg-white shadow-panel">
-        <div className="hidden grid-cols-[0.7fr_1.5fr_1fr_1fr_auto] gap-3 border-b border-slate-100 p-4 text-xs font-semibold uppercase tracking-[0.12em] text-muted md:grid">
+        <div className="hidden grid-cols-[0.9fr_1.5fr_1fr_1fr_auto] gap-3 border-b border-slate-100 p-4 text-xs font-semibold uppercase tracking-[0.12em] text-muted md:grid">
           <span>Ref</span>
           <span>Dirección</span>
           <span>Propietarios</span>
@@ -1846,8 +1986,11 @@ function PropertiesView({
           <span>Acciones</span>
         </div>
         {paged.pageItems.map((property) => (
-          <div key={property.id} className="grid gap-3 border-b border-slate-100 p-4 text-sm last:border-b-0 md:grid-cols-[0.7fr_1.5fr_1fr_1fr_auto]">
-            <p className="font-semibold text-ink">{property.reference}</p>
+          <div key={property.id} className="grid gap-3 border-b border-slate-100 p-4 text-sm last:border-b-0 md:grid-cols-[0.9fr_1.5fr_1fr_1fr_auto]">
+            <div>
+              <p className="font-semibold text-ink">{property.reference}</p>
+              <p className="text-muted">{[property.legacy_code && `Código ${property.legacy_code}`, `Creado ${formatDateTime(property.created_at)}`].filter(Boolean).join(" · ")}</p>
+            </div>
             <div>
               <p className="font-medium text-ink">{property.address}</p>
               <p className="text-muted">Padrón {property.padron || "sin dato"} · {property.occupancy_status}</p>
@@ -1873,6 +2016,217 @@ function PropertiesView({
   );
 }
 
+function VisitsView({
+  visits,
+  properties,
+  onRefresh
+}: {
+  visits: PropertyVisit[];
+  properties: PropertyItem[];
+  onRefresh: () => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("todos");
+  const [propertyId, setPropertyId] = useState(String(properties[0]?.id ?? ""));
+  const [interestedName, setInterestedName] = useState("");
+  const [interestedPhone, setInterestedPhone] = useState("");
+  const [notificationPhone, setNotificationPhone] = useState("");
+  const [reminderMinutes, setReminderMinutes] = useState("120");
+  const [visitAt, setVisitAt] = useState("");
+  const [notes, setNotes] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const visible = visits.filter((visit) => {
+    const text = `${visit.property_reference} ${visit.property_address} ${visit.interested_name} ${visit.interested_phone} ${visit.status}`;
+    return (status === "todos" || visit.status === status) && (!query || includesText(text, query));
+  });
+  const paged = usePaged(visible);
+  const nextVisits = visits.filter((visit) => visit.status !== "cancelada" && visit.status !== "realizada").slice(0, 3);
+  const dueAlerts = visits.filter((visit) => {
+    return isVisitAlertActive(visit, new Date());
+  });
+
+  async function createVisit(event: FormEvent) {
+    event.preventDefault();
+    if (!propertyId || !interestedName || !visitAt) return;
+    setLoading(true);
+    try {
+      await api.createPropertyVisit({
+        property_id: Number(propertyId),
+        interested_name: interestedName,
+        interested_phone: interestedPhone,
+        notification_phone: notificationPhone,
+        visit_at: visitAt,
+        status: "coordinada",
+        reminder_minutes_before: Number(reminderMinutes),
+        notes
+      });
+      setInterestedName("");
+      setInterestedPhone("");
+      setNotificationPhone("");
+      setReminderMinutes("120");
+      setVisitAt("");
+      setNotes("");
+      await onRefresh();
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function updateStatus(visit: PropertyVisit, nextStatus: string) {
+    await api.updatePropertyVisit(visit.id, { ...visit, status: nextStatus });
+    await onRefresh();
+  }
+
+  async function removeVisit(visit: PropertyVisit) {
+    if (!window.confirm(`Eliminar visita de ${visit.interested_name}?`)) return;
+    await api.deletePropertyVisit(visit.id);
+    await onRefresh();
+  }
+
+  return (
+    <div className="space-y-4">
+      {dueAlerts.length > 0 && (
+        <Panel title="Alertas activas" action={<span className="text-sm text-muted">dentro del margen configurado</span>}>
+          <div className="space-y-3">
+            {dueAlerts.map((visit) => {
+              const internalMessage = `Recordatorio de visita: ${visit.interested_name} en ${visit.property_reference} el ${formatDateTime(visit.visit_at)}. Tel: ${visit.interested_phone || "sin dato"}`;
+              return (
+                <div key={visit.id} className="grid gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 lg:grid-cols-[1fr_auto] lg:items-center">
+                  <div>
+                    <p className="font-semibold text-amber-950">{formatDateTime(visit.visit_at)} · {visit.property_reference}</p>
+                    <p className="text-sm text-amber-900">{visit.interested_name} · {visit.interested_phone || "sin celular"} · avisar {visit.reminder_minutes_before} min antes</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="btn-secondary" onClick={() => navigator.clipboard.writeText(internalMessage)}>
+                      <Copy className="h-4 w-4" />
+                      Copiar alerta
+                    </button>
+                    <a className={`btn-secondary ${!visit.notification_phone ? "pointer-events-none opacity-50" : ""}`} href={buildWhatsappUrl(visit.notification_phone, internalMessage) || "#"} target="_blank" rel="noreferrer">
+                      <MessageCircle className="h-4 w-4" />
+                      WhatsApp interno
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
+      <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+        <Panel title="Nueva visita" action={<span className="text-sm text-muted">agenda comercial</span>}>
+          <form onSubmit={createVisit} className="grid gap-3 md:grid-cols-2">
+            <label className="grid gap-1 text-sm font-medium text-ink">Propiedad
+              <select className="input" value={propertyId} onChange={(event) => setPropertyId(event.target.value)} required>
+                {properties.map((property) => (
+                  <option key={property.id} value={property.id}>{property.reference} · {property.address}</option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-ink">Fecha y hora
+              <input className="input" type="datetime-local" value={visitAt} onChange={(event) => setVisitAt(event.target.value)} required />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-ink">Interesado
+              <input className="input" value={interestedName} onChange={(event) => setInterestedName(event.target.value)} required />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-ink">Celular
+              <input className="input" value={interestedPhone} onChange={(event) => setInterestedPhone(event.target.value)} />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-ink">Avisar a WhatsApp interno
+              <input className="input" value={notificationPhone} onChange={(event) => setNotificationPhone(event.target.value)} placeholder="Celular de Emiliano o equipo" />
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-ink">Avisar antes
+              <select className="input" value={reminderMinutes} onChange={(event) => setReminderMinutes(event.target.value)}>
+                <option value="30">30 minutos</option>
+                <option value="60">1 hora</option>
+                <option value="120">2 horas</option>
+                <option value="180">3 horas</option>
+                <option value="1440">1 día</option>
+              </select>
+            </label>
+            <label className="grid gap-1 text-sm font-medium text-ink md:col-span-2">Notas
+              <textarea className="input min-h-20" value={notes} onChange={(event) => setNotes(event.target.value)} />
+            </label>
+            <button className="btn-primary justify-center md:col-span-2" disabled={loading || !properties.length}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              Agendar visita
+            </button>
+          </form>
+        </Panel>
+        <Panel title="Próximas visitas">
+          <div className="space-y-3">
+            {nextVisits.map((visit) => (
+              <div key={visit.id} className="rounded-md border border-slate-100 p-3">
+                <p className="font-semibold text-ink">{formatDateTime(visit.visit_at)} · {visit.interested_name}</p>
+                <p className="mt-1 text-sm text-muted">{visit.property_reference} · {visit.interested_phone || "sin celular"}</p>
+              </div>
+            ))}
+            {!nextVisits.length && <EmptyState title="Sin visitas próximas" detail="Agendá visitas para propiedades libres o en promoción." />}
+            <div className="rounded-md border border-slate-100 bg-slate-50 p-3 text-xs leading-5 text-muted">
+              La alerta aparece en el sistema cuando entra en la ventana configurada. WhatsApp se abre con el mensaje listo; el envío automático requiere WhatsApp Business API.
+            </div>
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Agenda de visitas">
+        <div className="mb-3 grid gap-2 md:grid-cols-[1fr_220px]">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            <input className="input pl-9" placeholder="Buscar propiedad, interesado o teléfono" value={query} onChange={(event) => setQuery(event.target.value)} />
+          </div>
+          <select className="input" value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="todos">Todos los estados</option>
+            <option value="coordinada">Coordinada</option>
+            <option value="confirmada">Confirmada</option>
+            <option value="realizada">Realizada</option>
+            <option value="cancelada">Cancelada</option>
+          </select>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {paged.pageItems.map((visit) => {
+            const whatsapp = buildWhatsappUrl(visit.interested_phone, visit.contact_message);
+            const internalMessage = `Recordatorio de visita: ${visit.interested_name} en ${visit.property_reference} el ${formatDateTime(visit.visit_at)}. Tel: ${visit.interested_phone || "sin dato"}`;
+            const internalWhatsapp = buildWhatsappUrl(visit.notification_phone, internalMessage);
+            return (
+              <div key={visit.id} className="grid gap-3 py-3 lg:grid-cols-[1fr_auto_auto] lg:items-center">
+                <div>
+                  <p className="font-semibold text-ink">{formatDateTime(visit.visit_at)} · {visit.interested_name}</p>
+                  <p className="text-sm text-muted">{visit.property_reference} · {visit.property_address} · {visit.status}</p>
+                  <p className="mt-1 text-xs text-muted">{visit.contact_message}</p>
+                  <p className="mt-1 text-xs text-muted">Aviso interno: {visit.reminder_minutes_before} min antes · {visit.notification_phone || "sin WhatsApp interno"}</p>
+                </div>
+                <select className="input min-w-36" value={visit.status} onChange={(event) => updateStatus(visit, event.target.value)}>
+                  <option value="coordinada">Coordinada</option>
+                  <option value="confirmada">Confirmada</option>
+                  <option value="realizada">Realizada</option>
+                  <option value="cancelada">Cancelada</option>
+                </select>
+                <div className="flex gap-2">
+                  <button className="icon-action" title="Copiar mensaje" onClick={() => navigator.clipboard.writeText(visit.contact_message)}>
+                    <Copy className="h-4 w-4" />
+                  </button>
+                  <a className={`icon-action ${!whatsapp ? "pointer-events-none opacity-50" : ""}`} title="Enviar WhatsApp" href={whatsapp || "#"} target="_blank" rel="noreferrer">
+                    <MessageCircle className="h-4 w-4" />
+                  </a>
+                  <a className={`icon-action ${!internalWhatsapp ? "pointer-events-none opacity-50" : ""}`} title="Avisar al equipo" href={internalWhatsapp || "#"} target="_blank" rel="noreferrer">
+                    <Bell className="h-4 w-4" />
+                  </a>
+                  <button className="icon-action" title="Eliminar visita" onClick={() => removeVisit(visit)}>
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {!visible.length && <EmptyState title="Sin visitas" detail="No hay visitas para los filtros actuales." />}
+        </div>
+        <Pagination page={paged.page} totalPages={paged.totalPages} total={visible.length} onPage={paged.setPage} />
+      </Panel>
+    </div>
+  );
+}
+
 function ContractsView({
   contracts,
   onNew,
@@ -1888,17 +2242,28 @@ function ContractsView({
   const [activeFilter, setActiveFilter] = useState("todos");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+  const [sortBy, setSortBy] = useState("codigo_desc");
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
-  const visible = contracts.filter((contract) => {
-    const text = `${contract.tenant_name} ${contract.property_reference} ${contract.property_address} ${contract.owners.map((owner) => owner.full_name).join(" ")} ${contract.legacy_code}`;
-    const matchesActive = activeFilter === "todos" || (activeFilter === "activo" ? contract.active : !contract.active);
-    const matchesDate = inDateRange(contract.start_date, fromDate, toDate);
-    return matchesActive && matchesDate && (!query || includesText(text, query));
-  });
+  const visible = [...contracts]
+    .filter((contract) => {
+      const text = `${contract.tenant_name} ${contract.property_reference} ${contract.property_address} ${contract.owners.map((owner) => owner.full_name).join(" ")} ${contract.legacy_code}`;
+      const matchesActive = activeFilter === "todos" || (activeFilter === "activo" ? contract.active : !contract.active);
+      const matchesDate = inDateRange(contract.start_date, fromDate, toDate);
+      return matchesActive && matchesDate && (!query || includesText(text, query));
+    })
+    .sort((a, b) => {
+      const codeA = legacyCodeValue(a.legacy_code || "0");
+      const codeB = legacyCodeValue(b.legacy_code || "0");
+      if (sortBy === "codigo_asc") return codeA > codeB ? 1 : codeA < codeB ? -1 : 0;
+      if (sortBy === "codigo_desc") return codeA < codeB ? 1 : codeA > codeB ? -1 : 0;
+      if (sortBy === "inicio_desc") return b.start_date.localeCompare(a.start_date);
+      if (sortBy === "inicio_asc") return a.start_date.localeCompare(b.start_date);
+      return a.tenant_name.localeCompare(b.tenant_name);
+    });
   const paged = usePaged(visible);
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-panel md:grid-cols-[1fr_180px_160px_160px_auto]">
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-panel md:grid-cols-[1fr_180px_160px_160px_220px_auto]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
           <input className="input pl-9" placeholder="Buscar inquilino, finca o propietario" value={query} onChange={(event) => setQuery(event.target.value)} />
@@ -1910,6 +2275,13 @@ function ContractsView({
         </select>
         <input className="input" type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
         <input className="input" type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} />
+        <select className="input" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
+          <option value="codigo_desc">Código mayor primero</option>
+          <option value="codigo_asc">Código menor primero</option>
+          <option value="inicio_desc">Inicio más reciente</option>
+          <option value="inicio_asc">Inicio más antiguo</option>
+          <option value="inquilino_asc">Inquilino A-Z</option>
+        </select>
         <button className="btn-primary" onClick={onNew}>
           <Plus className="h-4 w-4" />
           Nuevo contrato
@@ -1931,13 +2303,14 @@ function ContractsView({
               <MiniStat label="Alquiler" value={formatCurrency(contract.rent_amount)} />
               <MiniStat label="Comisión" value={`${contract.commission_percent}%`} />
               <MiniStat label="IRPF" value={contract.irpf_applies ? `${contract.irpf_percent}%` : "No aplica"} />
-              <MiniStat label="Pago" value={contract.rent_payment_timing || contract.payment_type} />
+              <MiniStat label="Garantía" value={contract.guarantee_type === "anda" ? "ANDA 2%" : contract.guarantee_type === "contaduria" ? "Contaduría 3%" : contract.guarantee_provider || contract.guarantee_type} />
             </div>
             <p className="mt-4 text-sm text-muted">Propietarios: {contract.owners.map((owner) => `${owner.full_name} ${owner.percentage}%`).join(", ") || "Sin propietarios"}</p>
             {isExpanded && (
               <div className="mt-4 rounded-md bg-slate-50 p-3 text-sm text-muted">
                 <p>Inicio: {contract.start_date} · Fin: {contract.end_date || "sin fecha"}</p>
                 <p>Origen pago: {contract.payment_origin} · Tipo: {contract.payment_type}</p>
+                <p>Régimen: {contract.rent_regime} · Índice: {contract.reajustment_index} · Próximo reajuste: {contract.next_reajustment_date || "sin fecha"}</p>
                 <p>Finca: {contract.property_reference} · {contract.property_address}</p>
               </div>
             )}
@@ -3150,6 +3523,12 @@ function ContractModal({
   const [irpfPercent, setIrpfPercent] = useState(String(contract?.irpf_percent ?? 10.5));
   const [paymentOrigin, setPaymentOrigin] = useState(contract?.payment_origin ?? "normal");
   const [rentPaymentTiming, setRentPaymentTiming] = useState(contract?.rent_payment_timing ?? "adelantado");
+  const [guaranteeType, setGuaranteeType] = useState(contract?.guarantee_type ?? "sin_garantia");
+  const [guaranteeProvider, setGuaranteeProvider] = useState(contract?.guarantee_provider ?? "");
+  const [guaranteePercent, setGuaranteePercent] = useState(String(contract?.guarantee_percent ?? 0));
+  const [rentRegime, setRentRegime] = useState(contract?.rent_regime ?? "libre_contratacion");
+  const [reajustmentIndex, setReajustmentIndex] = useState(contract?.reajustment_index ?? "libre");
+  const [nextReajustmentDate, setNextReajustmentDate] = useState(contract?.next_reajustment_date ?? "");
   const [active, setActive] = useState(contract?.active ?? true);
   const [loading, setLoading] = useState(false);
 
@@ -3167,6 +3546,12 @@ function ContractModal({
         rent_amount: Number(rentAmount),
         payment_type: paymentType,
         rent_payment_timing: rentPaymentTiming,
+        guarantee_type: guaranteeType,
+        guarantee_provider: guaranteeProvider,
+        guarantee_percent: Number(guaranteePercent),
+        rent_regime: rentRegime,
+        reajustment_index: reajustmentIndex,
+        next_reajustment_date: nextReajustmentDate || null,
         commission_percent: Number(commissionPercent),
         irpf_applies: irpfApplies,
         irpf_percent: Number(irpfPercent),
@@ -3242,6 +3627,60 @@ function ContractModal({
             <select className="input" value={paymentType} onChange={(event) => setPaymentType(event.target.value)}>
               <option value="adelantado">Adelantado</option>
               <option value="vencido">Vencido</option>
+            </select>
+          </div>
+          <div>
+            <label className="form-label">Garantía</label>
+            <select className="input" value={guaranteeType} onChange={(event) => {
+              const value = event.target.value;
+              setGuaranteeType(value);
+              if (value === "anda") {
+                setGuaranteePercent("2");
+                setPaymentOrigin("ANDA");
+              } else if (value === "contaduria") {
+                setGuaranteePercent("3");
+                setPaymentOrigin("Contaduria");
+              }
+            }}>
+              <option value="sin_garantia">Sin garantía</option>
+              <option value="anda">ANDA</option>
+              <option value="contaduria">Contaduría</option>
+              <option value="aseguradora">Aseguradora privada</option>
+              <option value="otro">Otra</option>
+            </select>
+          </div>
+          <div>
+            <label className="form-label">Proveedor garantía</label>
+            <input className="input" value={guaranteeProvider} onChange={(event) => setGuaranteeProvider(event.target.value)} placeholder="Mapfre, Porto, Sura..." />
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <label className="form-label">Garantía %</label>
+            <input className="input" type="number" step="0.1" value={guaranteePercent} onChange={(event) => setGuaranteePercent(event.target.value)} />
+          </div>
+          <div>
+            <label className="form-label">Régimen alquiler</label>
+            <select className="input" value={rentRegime} onChange={(event) => {
+              const value = event.target.value;
+              setRentRegime(value);
+              setReajustmentIndex(value === "regimen_legal" ? "indice_reajuste_alquileres" : "libre");
+            }}>
+              <option value="libre_contratacion">Libre contratación</option>
+              <option value="regimen_legal">Régimen legal</option>
+            </select>
+          </div>
+          <div>
+            <label className="form-label">Próximo reajuste</label>
+            <input className="input" type="date" value={nextReajustmentDate} onChange={(event) => setNextReajustmentDate(event.target.value)} />
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <label className="form-label">Índice reajuste</label>
+            <select className="input" value={reajustmentIndex} onChange={(event) => setReajustmentIndex(event.target.value)}>
+              <option value="libre">Libre / manual</option>
+              <option value="indice_reajuste_alquileres">Índice reajuste alquileres</option>
             </select>
           </div>
           <div>

@@ -16,6 +16,7 @@ import type {
   PersonDetail,
   PropertyDetail,
   PropertyItem,
+  PropertyVisit,
   PublicPortalData,
   Settlement,
   TenantCredit
@@ -78,6 +79,16 @@ export const api = {
     request(`/properties/${propertyId}/services/${serviceId}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deletePropertyService: (propertyId: number, serviceId: number) =>
     request<{ status: string }>(`/properties/${propertyId}/services/${serviceId}`, { method: "DELETE" }),
+  propertyVisits: (params: Record<string, string> = {}) => {
+    const search = new URLSearchParams(params).toString();
+    return request<PropertyVisit[]>(`/property-visits${search ? `?${search}` : ""}`);
+  },
+  createPropertyVisit: (payload: unknown) =>
+    request<PropertyVisit>("/property-visits", { method: "POST", body: JSON.stringify(payload) }),
+  updatePropertyVisit: (visitId: number, payload: unknown) =>
+    request<PropertyVisit>(`/property-visits/${visitId}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deletePropertyVisit: (visitId: number) =>
+    request<{ status: string }>(`/property-visits/${visitId}`, { method: "DELETE" }),
   contracts: () => request<ContractItem[]>("/contracts"),
   createContract: (payload: unknown) =>
     request<ContractItem>("/contracts", { method: "POST", body: JSON.stringify(payload) }),

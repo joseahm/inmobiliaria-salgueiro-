@@ -59,6 +59,19 @@ class PropertyServiceAccountCreate(BaseModel):
     notes: str = ""
 
 
+class PropertyVisitCreate(BaseModel):
+    property_id: int
+    interested_name: str
+    interested_phone: str = ""
+    interested_email: str = ""
+    visit_at: str
+    status: str = "coordinada"
+    contact_message: str = ""
+    notification_phone: str = ""
+    reminder_minutes_before: int = 60
+    notes: str = ""
+
+
 class InvoiceDocumentCreate(BaseModel):
     provider: str
     account_number: str = ""
@@ -129,6 +142,12 @@ class ContractCreate(BaseModel):
     rent_amount: float
     payment_type: str = "adelantado"
     rent_payment_timing: str = "adelantado"
+    guarantee_type: str = "sin_garantia"
+    guarantee_provider: str = ""
+    guarantee_percent: float = 0.0
+    rent_regime: str = "libre_contratacion"
+    reajustment_index: str = "libre"
+    next_reajustment_date: Optional[date] = None
     commission_percent: float = 8.0
     irpf_applies: bool = True
     irpf_percent: float = 10.5

@@ -40,6 +40,12 @@ def apply_sqlite_poc_migrations() -> None:
         "contract": [
             ("legacy_code", "VARCHAR NOT NULL DEFAULT ''"),
             ("rent_payment_timing", "VARCHAR NOT NULL DEFAULT 'adelantado'"),
+            ("guarantee_type", "VARCHAR NOT NULL DEFAULT 'sin_garantia'"),
+            ("guarantee_provider", "VARCHAR NOT NULL DEFAULT ''"),
+            ("guarantee_percent", "FLOAT NOT NULL DEFAULT 0"),
+            ("rent_regime", "VARCHAR NOT NULL DEFAULT 'libre_contratacion'"),
+            ("reajustment_index", "VARCHAR NOT NULL DEFAULT 'libre'"),
+            ("next_reajustment_date", "DATE DEFAULT NULL"),
         ],
         "charge": [
             ("responsible_type", "VARCHAR NOT NULL DEFAULT 'tenant'"),
@@ -68,6 +74,9 @@ def apply_sqlite_poc_migrations() -> None:
         ],
         "tenantcredit": [
             ("status", "VARCHAR NOT NULL DEFAULT 'disponible'"),
+        ],
+        "propertyvisit": [
+            ("notification_phone", "VARCHAR NOT NULL DEFAULT ''"),
         ],
     }
 

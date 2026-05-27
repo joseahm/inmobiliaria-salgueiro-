@@ -57,6 +57,21 @@ class PropertyServiceAccount(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class PropertyVisit(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    property_id: int = Field(foreign_key="property.id", index=True)
+    interested_name: str
+    interested_phone: str = ""
+    interested_email: str = ""
+    visit_at: datetime = Field(index=True)
+    status: str = Field(default="coordinada", index=True)
+    contact_message: str = ""
+    notification_phone: str = ""
+    reminder_minutes_before: int = 60
+    notes: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class InvoiceDocument(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     provider: str = Field(index=True)
@@ -124,6 +139,12 @@ class Contract(SQLModel, table=True):
     rent_amount: float
     payment_type: str = "adelantado"
     rent_payment_timing: str = "adelantado"
+    guarantee_type: str = "sin_garantia"
+    guarantee_provider: str = ""
+    guarantee_percent: float = 0.0
+    rent_regime: str = "libre_contratacion"
+    reajustment_index: str = "libre"
+    next_reajustment_date: Optional[date] = None
     commission_percent: float = 8.0
     irpf_applies: bool = True
     irpf_percent: float = 10.5
